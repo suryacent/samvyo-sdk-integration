@@ -17,7 +17,13 @@ import {
   RefreshCw,
   X,
   AlertTriangle,
-  Loader2
+  Loader2,
+  MessageCircle,
+  Share2,
+  Link,
+  FileText,
+  Calendar,
+  Star
 } from 'lucide-react'
 import './App.css'
 
@@ -52,6 +58,17 @@ function App() {
   const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [isRecording, setIsRecording] = useState(false)
   
+  // Chat state
+  const [showChat, setShowChat] = useState(false)
+  const [chatMessages, setChatMessages] = useState([])
+  const [chatInput, setChatInput] = useState('')
+  const [selectedChatReceiver, setSelectedChatReceiver] = useState('everyone')
+  
+  // Widget state
+  const [showWidgets, setShowWidgets] = useState(false)
+  const [selectedWidgetReceiver, setSelectedWidgetReceiver] = useState('everyone')
+  const [widgetPopups, setWidgetPopups] = useState([])
+  
   // Moderator features
   const [isModerator, setIsModerator] = useState(true) // Default as moderator
   const [authRequests, setAuthRequests] = useState([])
@@ -62,6 +79,30 @@ function App() {
   const videoRefs = useRef(new Map())
   const audioRefs = useRef(new Map())
   const screenShareRefs = useRef(new Map())
+
+  // Add pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const PARTICIPANTS_PER_PAGE = 10;
+
+  // Calculate paginated peers
+  const peerEntries = Array.from(peers.entries());
+  const totalPages = Math.ceil(peerEntries.length / PARTICIPANTS_PER_PAGE) || 1;
+  const paginatedPeers = peerEntries.slice(
+    (currentPage - 1) * PARTICIPANTS_PER_PAGE,
+    currentPage * PARTICIPANTS_PER_PAGE
+  );
+
+  // Responsive grid columns/rows based on number of participants on current page
+  const getGridTemplate = () => {
+    const count = paginatedPeers.length;
+    if (count <= 1) return { cols: 1, rows: 1 };
+    if (count === 2) return { cols: 2, rows: 1 };
+    if (count <= 4) return { cols: 2, rows: 2 };
+    if (count <= 6) return { cols: 3, rows: 2 };
+    if (count <= 9) return { cols: 3, rows: 3 };
+    return { cols: 5, rows: 2 };
+  };
+  const { cols, rows } = getGridTemplate();
 
   // Configuration parameters (matching the reference code)
   const inputParams = {
@@ -327,6 +368,40 @@ function App() {
       setVidScaleClient(null)
       setError('Room closed by moderator!')
     })
+
+    
+    client.on('customMessageError', (error) => {
+      console.error('Custom message error:', error)
+      setError(`Message error: ${error.error}`)
+    })
+
+    // Widget events
+    client.on('customMessage', (message) => {
+      console.log('Custom message received:', message)
+      const isLocalMessage = message.from === client.data.inputParams.peerId
+      
+      // Check if it's a widget message
+      if (message.type === 'widget' && !isLocalMessage) {
+        addWidgetPopup({
+          id: Date.now(),
+          from: message.from,
+          widgetType: message.customData?.widgetType,
+          widgetData: message.customData?.widgetData,
+          title: message.customData?.title,
+          timestamp: new Date().toLocaleTimeString()
+        })
+      } else if (message.type === 'chat' && !isLocalMessage) {
+        addChatMessage({
+          id: Date.now(),
+          from: message.from,
+          data: message.data,
+          type: message.type,
+          messageType: message.messageType,
+          customData: message.customData,
+          timestamp: new Date().toLocaleTimeString()
+        })
+      }
+    })
   }
 
   // Join room
@@ -529,7 +604,6 @@ function App() {
     })
   }
 
-  // Screen share management
   const addScreenShare = (peerId, videoTrack, type) => {
     setScreenShares(prev => {
       const newShares = new Map(prev)
@@ -550,6 +624,125 @@ function App() {
     // Clean up screen share ref
     screenShareRefs.current.delete(peerId)
   }
+
+  // Chat management
+  const addChatMessage = (message) => {
+    setChatMessages(prev => [...prev, message])
+  }
+
+  const sendChatMessage = async () => {
+    if (!chatInput.trim() || !vidScaleClient) return
+
+    try {
+      const receiverPeerId = selectedChatReceiver === 'everyone' ? null : selectedChatReceiver
+      
+      
+      addChatMessage({
+        id: Date.now(),
+        from: 'me',
+        data: chatInput,
+        type: 'chat',
+        messageType: receiverPeerId ? 'private' : 'public',
+        timestamp: new Date().toLocaleTimeString()
+      })
+
+      await vidScaleClient.sendCustomMessage(
+        chatInput,
+        'chat',
+        receiverPeerId,
+        'participant',
+        receiverPeerId ? 'private' : 'public'
+      )
+
+      setChatInput('')
+    } catch (err) {
+      setError(`Failed to send message: ${err.message}`)
+    }
+  }
+
+  const handleChatKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendChatMessage()
+    }
+  }
+
+  const getParticipantName = (peerId) => {
+    if (peerId === 'me') return 'You'
+    const peer = peers.get(peerId)
+    return peer ? peer.peerName : `Peer ${peerId}`
+  }
+
+
+  const addWidgetPopup = (widget) => {
+    setWidgetPopups(prev => [...prev, widget])
+  }
+
+  const removeWidgetPopup = (widgetId) => {
+    setWidgetPopups(prev => prev.filter(widget => widget.id !== widgetId))
+  }
+
+  const sendWidget = async (widgetType, widgetData, title) => {
+    if (!vidScaleClient) return
+
+    try {
+      const receiverPeerId = selectedWidgetReceiver === 'everyone' ? null : selectedWidgetReceiver
+      
+      await vidScaleClient.sendCustomMessage(
+        title || `Widget: ${widgetType}`,
+        'widget',
+        receiverPeerId,
+        'moderator',
+        receiverPeerId ? 'private' : 'public',
+        {
+          widgetType,
+          widgetData,
+          title
+        }
+      )
+    } catch (err) {
+      setError(`Failed to send widget: ${err.message}`)
+    }
+  }
+
+  const predefinedWidgets = [
+    {
+      type: 'feedback',
+      title: 'Meeting Feedback',
+      icon: <Star size={20} />,
+      data: {
+        url: 'https://forms.google.com/demo-feedback',
+        description: 'Share your thoughts about this meeting'
+      }
+    },
+    {
+      type: 'link',
+      title: 'Meeting Resources',
+      icon: <Link size={20} />,
+      data: {
+        url: 'https://docs.google.com/demo-resources',
+        description: 'Access meeting materials and resources'
+      }
+    },
+    {
+      type: 'survey',
+      title: 'Quick Survey',
+      icon: <FileText size={20} />,
+      data: {
+        url: 'https://surveymonkey.com/demo-survey',
+        description: 'Rate your experience and provide feedback'
+      }
+    },
+    {
+      type: 'calendar',
+      title: 'Next Meeting',
+      icon: <Calendar size={20} />,
+      data: {
+        url: 'https://calendar.google.com/demo-next-meeting',
+        description: 'Schedule for follow-up discussion'
+      }
+    }
+  ]
 
   // Moderator functions
   const addAuthRequest = (request) => {
@@ -701,6 +894,8 @@ function App() {
       <header className="meeting-header">
         <div className="header-left">
           <h1>Samvyo Meeting</h1>
+        </div>
+        <div className="header-center">
           {isJoined && <span className="room-info">Room: {roomId}</span>}
           {isRecording && <span className="recording-indicator">Recording</span>}
         </div>
@@ -770,28 +965,81 @@ function App() {
           ) : (
             <div className="video-container">
               {/* Main Video Grid */}
-              <div className={`video-grid ${getGridLayout()}`} ref={peerListRef}>
-                {Array.from(peers.entries()).map(([peerId, peer]) => (
-                  <div key={peerId} className="video-item">
-                    <div className="video-wrapper">
-                      <video 
-                        ref={(el) => {
-                          if (el) videoRefs.current.set(peerId, el)
+              <div
+                className="video-grid"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: `repeat(${cols}, 1fr)`,
+                  gridTemplateRows: `repeat(${rows}, 1fr)`,
+                  gap: '12px',
+                  width: '100%',
+                  height: '100%',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  alignItems: 'stretch',
+                  justifyItems: 'stretch',
+                  position: 'relative',
+                  padding: '16px',
+                  boxSizing: 'border-box',
+                }}
+                ref={peerListRef}
+              >
+                {paginatedPeers.map(([peerId, peer]) => (
+                  <div
+                    key={peerId}
+                    className="video-item"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      minHeight: '0',
+                      minWidth: '0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative',
+                      aspectRatio: '16/9',
+                    }}
+                  >
+                    <div
+                      className="video-wrapper"
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        maxWidth: '100%',
+                        maxHeight: '100%',
+                        aspectRatio: '16/9',
+                        background: '#181e29',
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        position: 'relative',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <video
+                        ref={el => {
+                          if (el) videoRefs.current.set(peerId, el);
                         }}
-                        className="video-element" 
-                        autoPlay 
+                        className="video-element"
+                        autoPlay
                         playsInline
                         muted={peer.type === 'local'}
-                      />
-                      <audio 
-                        ref={(el) => {
-                          if (el) audioRefs.current.set(peerId, el)
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'cover',
+                          background: '#181e29',
                         }}
-                        className="audio-element" 
-                        autoPlay 
+                      />
+                      <audio
+                        ref={el => {
+                          if (el) audioRefs.current.set(peerId, el);
+                        }}
+                        className="audio-element"
+                        autoPlay
                         playsInline
                       />
-                      
                       {/* Video Overlay */}
                       <div className="video-overlay">
                         <div className="participant-info">
@@ -801,7 +1049,6 @@ function App() {
                             {peer.type === 'local' && isModerator && <span className="moderator-indicator"> (Moderator)</span>}
                           </span>
                         </div>
-                        
                         {/* Status Indicators */}
                         <div className="status-indicators">
                           {peer.muted && (
@@ -820,6 +1067,30 @@ function App() {
                   </div>
                 ))}
               </div>
+              {/* Pagination Controls */}
+              {totalPages > 1 && (
+                <div className="pagination-controls" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '12px 0' }}>
+                  <button
+                    className="pagination-btn"
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    style={{ marginRight: 8 }}
+                  >
+                    Prev
+                  </button>
+                  <span style={{ color: '#94a3b8', fontSize: 14, margin: '0 8px' }}>
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    className="pagination-btn"
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                    style={{ marginLeft: 8 }}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
               
               {/* Screen Share Area */}
               {screenShares.size > 0 && (
@@ -892,6 +1163,24 @@ function App() {
                   <Users size={20} />
                   <span>Participants ({peers.size})</span>
                 </button>
+                <button 
+                  className={`control-btn chat-btn ${showChat ? 'active' : ''}`}
+                  onClick={() => setShowChat(!showChat)}
+                  title="Chat"
+                >
+                  <MessageCircle size={20} />
+                  <span>Chat</span>
+                </button>
+                {isModerator && (
+                  <button 
+                    className={`control-btn widgets-btn ${showWidgets ? 'active' : ''}`}
+                    onClick={() => setShowWidgets(!showWidgets)}
+                    title="Share Widgets"
+                  >
+                    <Share2 size={20} />
+                    <span>Widgets</span>
+                  </button>
+                )}
                 <button 
                   className="control-btn settings-btn" 
                   onClick={() => setShowSettings(!showSettings)}
@@ -1015,6 +1304,174 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Chat Panel */}
+        {showChat && (
+          <div className="chat-panel">
+            <div className="chat-header">
+              <h3>Chat</h3>
+              <button className="close-btn" onClick={() => setShowChat(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="chat-content">
+              {/* Chat Messages */}
+              <div className="chat-messages">
+                {chatMessages.length === 0 ? (
+                  <p className="no-messages">No messages yet. Start the conversation!</p>
+                ) : (
+                  chatMessages.map((message) => (
+                    <div 
+                      key={message.id} 
+                      className={`chat-message ${message.from === 'me' ? 'sent' : 'received'}`}
+                    >
+                      <div className="message-header">
+                        <span className="message-sender">
+                          {getParticipantName(message.from)}
+                        </span>
+                        <span className="message-time">{message.timestamp}</span>
+                      </div>
+                      <div className="message-content">
+                        {message.data}
+                      </div>
+                      {message.messageType === 'private' && (
+                        <div className="message-type">
+                          <span className="private-indicator">Private</span>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              
+              {/* Chat Input */}
+              <div className="chat-input-section">
+                <div className="chat-receiver-select">
+                  <label>Send to:</label>
+                  <select
+                    value={selectedChatReceiver}
+                    onChange={(e) => setSelectedChatReceiver(e.target.value)}
+                    className="receiver-select"
+                  >
+                    <option value="everyone">Everyone</option>
+                    {Array.from(peers.entries())
+                      .filter(([peerId, peer]) => peer.type !== 'local') // Exclude local participant
+                      .map(([peerId, peer]) => (
+                        <option key={peerId} value={peerId}>
+                          {peer.peerName}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+                
+                <div className="chat-input-container">
+                  <textarea
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyPress={handleChatKeyPress}
+                    placeholder="Type your message..."
+                    className="chat-input"
+                    rows={3}
+                  />
+                  <button 
+                    onClick={sendChatMessage}
+                    disabled={!chatInput.trim()}
+                    className="send-message-btn"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Widgets Panel */}
+        {showWidgets && (
+          <div className="widgets-panel">
+            <div className="widgets-header">
+              <h3>Share Widgets</h3>
+              <button className="close-btn" onClick={() => setShowWidgets(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="widgets-content">
+              <div className="widget-receiver-select">
+                <label>Send to:</label>
+                <select
+                  value={selectedWidgetReceiver}
+                  onChange={(e) => setSelectedWidgetReceiver(e.target.value)}
+                  className="receiver-select"
+                >
+                  <option value="everyone">Everyone</option>
+                  {Array.from(peers.entries())
+                    .filter(([peerId, peer]) => peer.type !== 'local')
+                    .map(([peerId, peer]) => (
+                      <option key={peerId} value={peerId}>
+                        {peer.peerName}
+                      </option>
+                    ))}
+                </select>
+              </div>
+              
+              <div className="widgets-list">
+                {predefinedWidgets.map((widget) => (
+                  <div key={widget.type} className="widget-item">
+                    <div className="widget-icon">
+                      {widget.icon}
+                    </div>
+                    <div className="widget-info">
+                      <span className="widget-title">{widget.title}</span>
+                      <span className="widget-description">
+                        {widget.data.description || `${widget.data.questions?.length || 0} questions`}
+                      </span>
+                    </div>
+                    <button 
+                      onClick={() => sendWidget(widget.type, widget.data, widget.title)}
+                      className="send-widget-btn"
+                      title={`Send ${widget.title}`}
+                    >
+                      Send
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Widget Popups */}
+        {widgetPopups.map((widget) => (
+          <div key={widget.id} className="widget-popup">
+            <div className="widget-popup-header">
+              <h4>{widget.title}</h4>
+              <button 
+                className="close-btn" 
+                onClick={() => removeWidgetPopup(widget.id)}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="widget-popup-content">
+              <p className="widget-popup-description">
+                {widget.widgetData.description}
+              </p>
+              <a 
+                href={widget.widgetData.url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="widget-popup-link"
+              >
+                {widget.widgetType === 'feedback' && 'Take Feedback'}
+                {widget.widgetType === 'link' && 'View Resources'}
+                {widget.widgetType === 'survey' && 'Take Survey'}
+                {widget.widgetType === 'calendar' && 'Add to Calendar'}
+              </a>
+            </div>
+          </div>
+        ))}
 
         {/* Authentication Requests */}
         {authRequests.length > 0 && (
