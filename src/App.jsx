@@ -604,7 +604,6 @@ function App() {
     })
   }
 
-  // Screen share management
   const addScreenShare = (peerId, videoTrack, type) => {
     setScreenShares(prev => {
       const newShares = new Map(prev)
