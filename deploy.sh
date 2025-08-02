@@ -1,5 +1,3 @@
-
-
 ENV=$1
 
 if [ "$ENV" != "dev" ] && [ "$ENV" != "prod" ]; then
