@@ -673,7 +673,7 @@ function App() {
     return peer ? peer.peerName : `Peer ${peerId}`
   }
 
-  // Widget management
+
   const addWidgetPopup = (widget) => {
     setWidgetPopups(prev => [...prev, widget])
   }
