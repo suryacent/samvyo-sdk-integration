@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-// import samvyo from 'samvyo-js-sdk'
+import samvyo from 'samvyo-js-sdk'
 import { 
   Mic, 
   MicOff, 
